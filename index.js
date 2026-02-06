@@ -1,103 +1,83 @@
-const { default: makeWASocket, DisconnectReason, useSingleFileAuthState } = require('@adiwajshing/baileys');
+const { WAConnection, MessageType } = require('@adiwajshing/baileys');
 const fs = require('fs');
-const path = require('path');
+const qrcode = require('qrcode-terminal');
 
 // Bot info
-const BOT_OWNER = "EVIL EURO"; // Owner name
-const BOT_VERSION = "5.2.5";
-const PREFIX = ".";
+const ownerName = "EVIL EURO";
+const botVersion = "5.2.5";
 
-// Auth
-const { state, saveState } = useSingleFileAuthState('./auth_info.json');
+// Initialize connection
+const conn = new WAConnection();
+conn.version = [2, 2204, 13];
+conn.logger.level = 'warn';
 
-// Initialize WhatsApp connection
-const conn = makeWASocket({
-    auth: state,
-    printQRInTerminal: false // NO QR, using pairing code
+// Show pairing code (instead of QR)
+conn.on('qr', qr => {
+    console.log('=== PAIRING CODE ===');
+    console.log(qr); // Share this code to pair device
+    qrcode.generate(qr, { small: true });
 });
 
-// Save auth updates
-conn.ev.on('creds.update', saveState);
+// When bot connects
+conn.on('open', () => {
+    console.log(`✅ Bot is online!`);
+    console.log(`Owner: ${ownerName}`);
+    console.log(`Version: ${botVersion}`);
+});
 
-// Load commands from ./commands folder
-const commands = {};
-const commandFolders = fs.readdirSync('./commands').filter(f => fs.statSync(`./commands/${f}`).isDirectory());
+// Commands list
+const commands = {
+    ai: ['BING','DALL','GEMINI','GPT','GROQ','UPSCALE'],
+    audio: ['AVEC','BASS','BLACK','BLOWN','CUT','DEEP','EARRAPE','FAST','FAT','HISTO','LOW','NIGHTCORE','PITCH','ROBOT','SLOW','SMOOTH','TREBLE','TUPAI','VECTOR'],
+    autoreply: ['FILTER','GFILTER','GSTOP','PFILTER','PSTOP','STOP'],
+    bot: ['BACKUP','GAUTH','GUPLOAD','REMINDER','TOG','UPDATE','UPDATE NOW'],
+    budget: ['DELBUDGET','EXPENSE','INCOME','SUMMARY'],
+    document: ['PAGE','PDF'],
+    download: ['APK','FB','FULLSS','INSTA','MEDIAFIRE','PINTEREST','PLAY','REDDIT','SONG','SPOTIFY','SS','STORY','TIKTOK','TWITTER','UPLOAD','VIDEO','YTA','YTV'],
+    editor: ['BLOODY','BOKEH','CARTOON','COLOR','DARK','DEMON','ENHANCE','GANDM','HORNED','KISS','LOOK','MAKEUP','PENCIL','SKETCH','SKULL','WANTED','ZOMBIE'],
+    game: ['TICTACTOE','WCG','WRG'],
+    group: ['ADD','AMUTE','ANTIFAKE','ANTIGM','ANTILINK','ANTISPAM','ANTIWORD','AUNMUTE','COMMON','DEMOTE','GINF0','GOODBYE','GPP','GSTATUS','INACTIVE','INVITE','JOIN','KICK','MSGS','MUTE','PDM','PROMOTE','RESET','REVOKE','TAG','UNMUTE','VOTE','WARN','WELCOME'],
+    logia: ['OPE','YAMI','ZUSHI'],
+    misc: ['AFK','ALIVE','AVM','CALC','CREACT','DELCMD','FANCY','FORWARD','GETCMD','LYDIA','MENTION','MFORWARD','NEWS','PING','QR','REACT','REBOOT','RMBG','SAVE','SETCMD','TTS','URL','WHOIS'],
+    personal: ['DELGREET','GETGREET','SETGREET'],
+    plugin: ['PLUGIN','REMOVE'],
+    schedule: ['DELSCHEDULE','GETSCHEDULE','SETSCHEDULE'],
+    search: ['EMIX','EMOJI','FIND','IG','IMG','ISON','JEAN','MOVIE','TIME','TRT','WEATHER','YTS'],
+    sticker: ['CIRCLE','EXIF','MP4','PHOTO','STICKER','TAKE','TG'],
+    textmaker: ['3D','ANGEL','AVENGER','BLUB','BPINK','CAT','GLITCH','GLITTER','GRAFFITI','HACKER','LIGHT','MARVEL','NEON','SCI','SIGN','TATTOO','WATERCOLOR'],
+    user: ['BLOCK','FULLPP','GJID','JID','LEFT','PP','UNBLOCK'],
+    vars: ['ALLVAR','DELSUDO','DELVAR','GETSUDO','GETVAR','SETSUDO','SETVAR'],
+    video: ['COMPRESS','CROP','MERGE','MP3','REVERSE','ROTATE','TRIM'],
+    whatsapp: ['CALL','CAPTION','CLEAR','DELETE','DLT','DOC','ONLINE','POLL','READ','SCSTATUS','SETSTATUS','STATUS','VV']
+};
 
-for (const folder of commandFolders) {
-    const files = fs.readdirSync(`./commands/${folder}`).filter(f => f.endsWith('.js'));
-    for (const file of files) {
-        const cmd = require(`./commands/${folder}/${file}`);
-        if(cmd.name) {
-            commands[cmd.name.toLowerCase()] = cmd; // ensure lowercase for command matching
+// Listen for messages
+conn.on('chat-update', async chatUpdate => {
+    if (!chatUpdate.hasNewMessage) return;
+    const message = chatUpdate.messages.all()[0];
+    if (!message.message) return;
+
+    const sender = message.key.remoteJid;
+    const msg = message.message.conversation || '';
+
+    const cmd = msg.trim().split(' ')[0].toUpperCase();
+    let found = false;
+
+    for (let category in commands) {
+        if (commands[category].includes(cmd)) {
+            found = true;
+            await conn.sendMessage(sender, `✅ Command "${cmd}" recognized in category "${category}".`, MessageType.text);
+            break;
         }
     }
+
+    if (!found && msg.startsWith('.')) {
+        await conn.sendMessage(sender, `❌ Command "${cmd}" not found.`, MessageType.text);
+    }
+});
+
+// Start bot
+async function startBot() {
+    await conn.connect({ timeoutMs: 30 * 1000 });
 }
-
-// Message handler
-conn.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    const msg = messages[0];
-    if (!msg.message) return;
-    const sender = msg.key.remoteJid;
-
-    // Get message text
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-    if (!text || !text.startsWith(PREFIX)) return;
-
-    const args = text.slice(PREFIX.length).trim().split(/ +/);
-    const cmdName = args.shift().toLowerCase();
-
-    // Execute command if exists
-    if (commands[cmdName]) {
-        try {
-            await commands[cmdName].execute(conn, msg, args);
-        } catch (err) {
-            console.error(`Error executing command ${cmdName}:`, err);
-        }
-    }
-});
-
-// Connection status handler
-conn.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
-    if(connection === 'close') {
-        const reason = lastDisconnect?.error?.output?.statusCode;
-        if(reason !== DisconnectReason.loggedOut) {
-            console.log('Reconnecting...');
-            conn.connect(); // Reconnect automatically if not logged out
-        } else {
-            console.log('Connection closed. You need to re-pair the bot.');
-        }
-    } else if(connection === 'open') {
-        console.log(`Bot connected as ${BOT_OWNER} - Version ${BOT_VERSION}`);
-    }
-});
-
-console.log(`Bot is running! Prefix: ${PREFIX}`);
-
-// Categories reference (commands should be in ./commands/<category>/)
-console.log(`
-Commands loaded:
-- AI
-- AUDIO
-- AUTOREPLY
-- BOT
-- BUDGET
-- DOCUMENT
-- DOWNLOAD
-- EDITOR
-- GAME
-- GROUP
-- LOGIA
-- MISC
-- PERSONAL
-- PLUGIN
-- SCHEDULE
-- SEARCH
-- STICKER
-- TEXTMAKER
-- USER
-- VARS
-- VIDEO
-- WHATSAPP
-`);
+startBot();
